@@ -29,7 +29,7 @@ func NewProxyExitInfoProber(cfg *config.Config) service.ProxyExitInfoProber {
 		}
 	}
 	if insecure {
-		log.Printf("[ProxyProbe] Warning: insecure_skip_verify is not allowed and will cause probe failure.")
+		log.Printf("[ProxyProbe] insecure_skip_verify enabled; TLS validation will be skipped only on proxied connections.")
 	}
 	return &proxyProbeService{
 		insecureSkipVerify: insecure,

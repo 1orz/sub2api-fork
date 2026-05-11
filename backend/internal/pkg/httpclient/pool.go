@@ -16,9 +16,11 @@
 package httpclient
 
 import (
+	"crypto/tls"
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -121,9 +123,11 @@ func buildTransport(opts Options) (*http.Transport, error) {
 		ResponseHeaderTimeout: opts.ResponseHeaderTimeout,
 	}
 
-	if opts.InsecureSkipVerify {
-		// 安全要求：禁止跳过证书验证，避免中间人攻击。
-		return nil, fmt.Errorf("insecure_skip_verify is not allowed; install a trusted certificate instead")
+	// TLS skip-verify is permitted ONLY when traffic goes through a proxy that may
+	// present a self-signed cert (e.g. BrightData). Direct upstream connections
+	// always verify, even if the caller or env requests skip.
+	if opts.ProxyURL != "" && (opts.InsecureSkipVerify || upstreamInsecureSkipVerify()) {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // proxy-only, gated by GATEWAY_UPSTREAM_INSECURE_SKIP_VERIFY or caller opts
 	}
 
 	_, parsed, err := proxyurl.Parse(opts.ProxyURL)
@@ -139,6 +143,17 @@ func buildTransport(opts Options) (*http.Transport, error) {
 	}
 
 	return transport, nil
+}
+
+// upstreamInsecureSkipVerify reports whether upstream TLS certificate verification
+// should be skipped. Gated by GATEWAY_UPSTREAM_INSECURE_SKIP_VERIFY (true/1/yes/on).
+// Caller is expected to enforce the proxy-only scope at the call site.
+func upstreamInsecureSkipVerify() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("GATEWAY_UPSTREAM_INSECURE_SKIP_VERIFY"))) {
+	case "true", "1", "yes", "on":
+		return true
+	}
+	return false
 }
 
 func buildClientKey(opts Options) string {
