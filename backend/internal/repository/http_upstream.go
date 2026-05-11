@@ -3,6 +3,7 @@ package repository
 import (
 	"compress/flate"
 	"compress/gzip"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -767,10 +769,28 @@ func buildUpstreamTransport(settings poolSettings, proxyURL *url.URL) (*http.Tra
 		IdleConnTimeout:       settings.idleConnTimeout,
 		ResponseHeaderTimeout: settings.responseHeaderTimeout,
 	}
+	// Only relax TLS verification when forwarding through a proxy that may present
+	// a self-signed cert (e.g. BrightData, MITM-style debugging). Direct upstream
+	// connections always verify, even when the env flag is set.
+	if proxyURL != nil && upstreamInsecureSkipVerify() {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true} //nolint:gosec // proxy-only, gated by GATEWAY_UPSTREAM_INSECURE_SKIP_VERIFY
+	}
 	if err := proxyutil.ConfigureTransportProxy(transport, proxyURL); err != nil {
 		return nil, err
 	}
 	return transport, nil
+}
+
+// upstreamInsecureSkipVerify reports whether upstream TLS certificate verification
+// should be skipped. Gated by the GATEWAY_UPSTREAM_INSECURE_SKIP_VERIFY env var
+// (true/1/yes). Intended for proxies that present self-signed certs (e.g. BrightData,
+// MITM-style debugging proxies). Affects both plain transport and uTLS fingerprint paths.
+func upstreamInsecureSkipVerify() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("GATEWAY_UPSTREAM_INSECURE_SKIP_VERIFY"))) {
+	case "true", "1", "yes", "on":
+		return true
+	}
+	return false
 }
 
 // buildUpstreamTransportWithTLSFingerprint 构建带 TLS 指纹伪装的 Transport
