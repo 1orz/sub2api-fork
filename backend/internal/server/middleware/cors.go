@@ -53,6 +53,11 @@ func CORS(cfg config.CORSConfig) gin.HandlerFunc {
 	allowHeaders := []string{
 		"Content-Type", "Content-Length", "Accept-Encoding", "X-CSRF-Token", "Authorization",
 		"accept", "origin", "Cache-Control", "X-Requested-With", "X-API-Key",
+		// Anthropic JS SDK browser 模式必带头：
+		// - anthropic-version: 协议版本（每次请求强制发）
+		// - anthropic-beta: beta 特性
+		// - anthropic-dangerous-direct-browser-access: browser SDK 调用必须带，否则 SDK 自身会拒发
+		"anthropic-version", "anthropic-beta", "anthropic-dangerous-direct-browser-access",
 	}
 	// OpenAI Node SDK 会发送 x-stainless-* 请求头，需在 CORS 中显式放行。
 	openAIProperties := []string{

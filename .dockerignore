@@ -25,6 +25,9 @@ Thumbs.db
 # Build artifacts
 dist/
 build/
+# Allow embedded frontend dist when using Dockerfile.local (host pre-builds frontend
+# to bypass esbuild EPIPE under QEMU emulation on Apple Silicon).
+!backend/internal/web/dist/
 
 # Node modules (will be installed in container)
 frontend/node_modules/
