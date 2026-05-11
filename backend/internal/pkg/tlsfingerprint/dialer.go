@@ -11,6 +11,8 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"strings"
 
 	utls "github.com/refraction-networking/utls"
 	"golang.org/x/net/proxy"
@@ -176,7 +178,7 @@ func (d *SOCKS5ProxyDialer) DialTLSContext(ctx context.Context, network, addr st
 	slog.Debug("tls_fingerprint_socks5_tunnel_established")
 
 	// Step 3: Perform TLS handshake on the tunnel with utls fingerprint
-	return performTLSHandshake(ctx, conn, d.profile, addr)
+	return performTLSHandshake(ctx, conn, d.profile, addr, upstreamInsecureSkipVerify())
 }
 
 // DialTLSContext establishes a TLS connection through HTTP proxy with the configured fingerprint.
@@ -247,7 +249,7 @@ func (d *HTTPProxyDialer) DialTLSContext(ctx context.Context, network, addr stri
 	slog.Debug("tls_fingerprint_http_proxy_tunnel_established")
 
 	// Step 4: Perform TLS handshake on the tunnel with utls fingerprint
-	return performTLSHandshake(ctx, conn, d.profile, addr)
+	return performTLSHandshake(ctx, conn, d.profile, addr, upstreamInsecureSkipVerify())
 }
 
 // DialTLSContext establishes a TLS connection with the configured fingerprint.
@@ -262,21 +264,28 @@ func (d *Dialer) DialTLSContext(ctx context.Context, network, addr string) (net.
 	}
 	slog.Debug("tls_fingerprint_tcp_connected", "addr", addr)
 
-	// Perform TLS handshake with utls fingerprint
-	return performTLSHandshake(ctx, conn, d.profile, addr)
+	// Perform TLS handshake with utls fingerprint (direct connection: always verify cert)
+	return performTLSHandshake(ctx, conn, d.profile, addr, false)
 }
 
 // performTLSHandshake performs the uTLS handshake on an established connection.
 // It builds a ClientHello spec from the profile, applies it, and completes the handshake.
 // On failure, conn is closed and an error is returned.
-func performTLSHandshake(ctx context.Context, conn net.Conn, profile *Profile, addr string) (net.Conn, error) {
+// skipVerify disables peer certificate validation; callers should set it true only when
+// the connection runs through a proxy that presents a self-signed cert (gated by
+// GATEWAY_UPSTREAM_INSECURE_SKIP_VERIFY at the call site). Direct connections always verify.
+func performTLSHandshake(ctx context.Context, conn net.Conn, profile *Profile, addr string, skipVerify bool) (net.Conn, error) {
 	host, _, err := net.SplitHostPort(addr)
 	if err != nil {
 		host = addr
 	}
 
 	spec := buildClientHelloSpecFromProfile(profile)
-	tlsConn := utls.UClient(conn, &utls.Config{ServerName: host}, utls.HelloCustom)
+	utlsCfg := &utls.Config{ServerName: host}
+	if skipVerify {
+		utlsCfg.InsecureSkipVerify = true //nolint:gosec // proxy-only, gated by GATEWAY_UPSTREAM_INSECURE_SKIP_VERIFY
+	}
+	tlsConn := utls.UClient(conn, utlsCfg, utls.HelloCustom)
 
 	if err := tlsConn.ApplyPreset(spec); err != nil {
 		_ = conn.Close()
@@ -296,6 +305,17 @@ func performTLSHandshake(ctx context.Context, conn net.Conn, profile *Profile, a
 		"alpn", state.NegotiatedProtocol)
 
 	return tlsConn, nil
+}
+
+// upstreamInsecureSkipVerify reports whether upstream TLS certificate verification
+// should be skipped. Gated by GATEWAY_UPSTREAM_INSECURE_SKIP_VERIFY (true/1/yes/on).
+// Mirrors the helper in repository/http_upstream.go to avoid an inverted package dependency.
+func upstreamInsecureSkipVerify() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("GATEWAY_UPSTREAM_INSECURE_SKIP_VERIFY"))) {
+	case "true", "1", "yes", "on":
+		return true
+	}
+	return false
 }
 
 // toUTLSCurves converts uint16 slice to utls.CurveID slice.
